@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 matamaple-xm-readiness = "matamaple_trader.readiness.cli:main"
 matamaple-xm-collect = "matamaple_trader.data.collection_cli:main"
+matamaple-dataset-review = "matamaple_trader.validation.dataset_review_cli:main"
 matamaple-holdout-proposal = "matamaple_trader.validation.holdout_cli:main"
 matamaple-freeze-holdout = "matamaple_trader.validation.freeze_holdout_cli:main"
 
