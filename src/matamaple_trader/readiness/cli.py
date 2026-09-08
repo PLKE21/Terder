@@ -8,7 +8,7 @@ import sys
 import pandas as pd
 
 from matamaple_trader.adapters.mt5_connector import MT5Connector
-from .xm_smoke import run_readiness_check
+from .fbs_smoke import run_readiness_check
 
 TIMEFRAME_DELTAS={
     'M1':pd.Timedelta('1min'),
@@ -29,7 +29,7 @@ def _parse_utc(value:str)->datetime:
 
 
 def main(argv:list[str]|None=None)->int:
-    parser=argparse.ArgumentParser(description='Read-only XM/MT5 readiness smoke check. Never sends orders.')
+    parser=argparse.ArgumentParser(description='Read-only FBS/MT5 readiness smoke check. Never sends orders.')
     parser.add_argument('--symbol',default='EURUSD')
     parser.add_argument('--timeframe',choices=tuple(TIMEFRAME_DELTAS),default='M15')
     parser.add_argument('--start',required=True,type=_parse_utc)
@@ -37,8 +37,8 @@ def main(argv:list[str]|None=None)->int:
     parser.add_argument('--min-bars',type=int,default=100)
     parser.add_argument('--max-spread-points',type=int,default=None)
     parser.add_argument('--max-tick-age-seconds',type=float,default=10.0)
-    parser.add_argument('--check-continuity',action='store_true',help='Enable exact bar-gap checks. Use only after validating the symbol/session calendar for the requested period.')
-    parser.add_argument('--broker-history',default='data/broker/spec_history.jsonl')
+    parser.add_argument('--check-continuity',action='store_true',help='Enable exact bar-gap checks only after validating the FBS symbol/session calendar for the requested period.')
+    parser.add_argument('--broker-history',default='data/fbs/broker/spec_history.jsonl')
     args=parser.parse_args(argv)
 
     try:
