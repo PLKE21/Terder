@@ -8,7 +8,14 @@ from pathlib import Path
 from time import monotonic
 from typing import Protocol
 
-from matamaple_trader.ai import AIReview, AIReviewDecision, AIReviewInput, OllamaError, review_signal
+from matamaple_trader.ai import (
+    AICircuitBreaker,
+    AIReview,
+    AIReviewDecision,
+    AIReviewInput,
+    OllamaError,
+    review_signal,
+)
 from matamaple_trader.domain import Signal, SignalResult
 from matamaple_trader.execution import (
     ExecutionContext,
@@ -68,12 +75,7 @@ class RuntimeAuditJournal:
 
 
 class DemoRuntimeOrchestrator:
-    """Single fail-closed runtime path for reviewed FBS demo execution.
-
-    The orchestrator never lets AI create a trade direction and refuses to continue
-    whenever AI, risk, execution guard, or MT5 preflight fails. LIVE mode is delegated
-    to the demo sender, which hard-disables it.
-    """
+    """Single fail-closed runtime path for reviewed FBS demo execution."""
 
     def __init__(
         self,
@@ -85,6 +87,7 @@ class DemoRuntimeOrchestrator:
         demo_sender: FBSDemoOrderSender,
         journal: RuntimeAuditJournal | None = None,
         max_ai_latency_seconds: float = 20.0,
+        ai_circuit_breaker: AICircuitBreaker | None = None,
     ) -> None:
         if max_ai_latency_seconds <= 0:
             raise ValueError("max_ai_latency_seconds must be positive")
@@ -95,6 +98,7 @@ class DemoRuntimeOrchestrator:
         self.demo_sender = demo_sender
         self.journal = journal or RuntimeAuditJournal()
         self.max_ai_latency_seconds = max_ai_latency_seconds
+        self.ai_circuit_breaker = ai_circuit_breaker
 
     def _finish(self, signal: SignalResult, decision: RuntimeDecision) -> RuntimeDecision:
         self.journal.append(signal=signal, decision=decision)
@@ -113,19 +117,22 @@ class DemoRuntimeOrchestrator:
         kill_switch: KillSwitch = KillSwitch(),
     ) -> RuntimeDecision:
         if signal.signal not in {Signal.BUY, Signal.SELL}:
-            return self._finish(
-                signal,
-                RuntimeDecision(signal.signal, RuntimeStage.BLOCKED, False, "quant_signal_not_actionable"),
-            )
+            return self._finish(signal, RuntimeDecision(signal.signal, RuntimeStage.BLOCKED, False, "quant_signal_not_actionable"))
         if ai_inputs.quant_signal is not signal.signal or ai_inputs.symbol != signal.symbol:
-            return self._finish(
-                signal,
-                RuntimeDecision(Signal.WAIT, RuntimeStage.BLOCKED, False, "ai_input_mismatch"),
-            )
+            return self._finish(signal, RuntimeDecision(Signal.WAIT, RuntimeStage.BLOCKED, False, "ai_input_mismatch"))
         if order_plan.side is not signal.signal or order_plan.symbol != signal.symbol:
+            return self._finish(signal, RuntimeDecision(Signal.WAIT, RuntimeStage.BLOCKED, False, "order_plan_mismatch"))
+
+        if self.ai_circuit_breaker is not None and not self.ai_circuit_breaker.allow_request():
+            state = self.ai_circuit_breaker.state()
             return self._finish(
                 signal,
-                RuntimeDecision(Signal.WAIT, RuntimeStage.BLOCKED, False, "order_plan_mismatch"),
+                RuntimeDecision(
+                    Signal.WAIT,
+                    RuntimeStage.AI,
+                    False,
+                    f"ai_circuit_open:{state.retry_after_seconds:.3f}",
+                ),
             )
 
         started = monotonic()
@@ -133,52 +140,44 @@ class DemoRuntimeOrchestrator:
             ai_review = self.analyst.review(ai_inputs)
         except (OllamaError, TimeoutError, RuntimeError) as exc:
             latency = monotonic() - started
+            if self.ai_circuit_breaker is not None:
+                self.ai_circuit_breaker.record_failure()
             return self._finish(
                 signal,
                 RuntimeDecision(Signal.WAIT, RuntimeStage.AI, False, f"ai_unavailable:{type(exc).__name__}", ai_latency_seconds=latency),
             )
+
         latency = monotonic() - started
         if latency > self.max_ai_latency_seconds:
+            if self.ai_circuit_breaker is not None:
+                self.ai_circuit_breaker.record_failure()
             return self._finish(
                 signal,
                 RuntimeDecision(Signal.WAIT, RuntimeStage.AI, False, "ai_latency_limit", ai_review, latency),
             )
+        if self.ai_circuit_breaker is not None:
+            self.ai_circuit_breaker.record_success()
 
         gated_signal = review_signal(signal, ai_review)
         if gated_signal not in {Signal.BUY, Signal.SELL}:
             reason = "ai_rejected" if ai_review.decision is AIReviewDecision.REJECT else "ai_not_confirmed"
-            return self._finish(
-                signal,
-                RuntimeDecision(gated_signal, RuntimeStage.AI, False, reason, ai_review, latency),
-            )
+            return self._finish(signal, RuntimeDecision(gated_signal, RuntimeStage.AI, False, reason, ai_review, latency))
 
         risk = self.risk_engine.evaluate(gated_signal, risk_state)
         if not risk.allowed:
-            return self._finish(
-                signal,
-                RuntimeDecision(Signal.WAIT, RuntimeStage.RISK, False, risk.reason, ai_review, latency, risk),
-            )
+            return self._finish(signal, RuntimeDecision(Signal.WAIT, RuntimeStage.RISK, False, risk.reason, ai_review, latency, risk))
 
         execution = self.execution_guard.evaluate(signal, risk, execution_context)
         if not execution.allowed:
-            return self._finish(
-                signal,
-                RuntimeDecision(Signal.WAIT, RuntimeStage.EXECUTION_GUARD, False, execution.reason, ai_review, latency, risk, execution),
-            )
+            return self._finish(signal, RuntimeDecision(Signal.WAIT, RuntimeStage.EXECUTION_GUARD, False, execution.reason, ai_review, latency, risk, execution))
 
         preflight = self.order_adapter.preflight_order(order_plan, risk, execution, free_margin=free_margin)
         if not preflight.allowed:
-            return self._finish(
-                signal,
-                RuntimeDecision(Signal.WAIT, RuntimeStage.PREFLIGHT, False, preflight.reason, ai_review, latency, risk, execution, preflight),
-            )
+            return self._finish(signal, RuntimeDecision(Signal.WAIT, RuntimeStage.PREFLIGHT, False, preflight.reason, ai_review, latency, risk, execution, preflight))
 
         if mode is ExecutionMode.DRY_RUN:
             receipt = self.order_adapter.execute(order_plan, preflight)
-            return self._finish(
-                signal,
-                RuntimeDecision(gated_signal, RuntimeStage.PREFLIGHT, True, receipt.reason, ai_review, latency, risk, execution, preflight, False),
-            )
+            return self._finish(signal, RuntimeDecision(gated_signal, RuntimeStage.PREFLIGHT, True, receipt.reason, ai_review, latency, risk, execution, preflight, False))
 
         send_result = self.demo_sender.send(order_plan, preflight, mode=mode, kill_switch=kill_switch)
         return self._finish(
