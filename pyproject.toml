@@ -23,6 +23,7 @@ matamaple-freeze-holdout = "matamaple_trader.validation.freeze_holdout_cli:main"
 matamaple-development-experiment = "matamaple_trader.experiments.cli:main"
 matamaple-lock-candidate = "matamaple_trader.validation.candidate_lock_cli:main"
 matamaple-evaluate-holdout = "matamaple_trader.validation.holdout_eval_cli:main"
+matamaple-xm-shadow = "matamaple_trader.shadow.xm_cli:main"
 matamaple-release-readiness = "matamaple_trader.validation.release_readiness_cli:main"
 
 [project.optional-dependencies]
