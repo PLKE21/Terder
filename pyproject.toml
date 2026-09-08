@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 matamaple-xm-readiness = "matamaple_trader.readiness.cli:main"
+matamaple-xm-collect = "matamaple_trader.data.collection_cli:main"
 
 [project.optional-dependencies]
 mt5 = ["MetaTrader5>=5.0.45"]
