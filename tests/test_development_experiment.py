@@ -28,11 +28,12 @@ def development_dataset(cutoff, *, leak=False):
     if leak:
         ts=ts[:-1].append(pd.DatetimeIndex([pd.Timestamp(cutoff)]))
     x=np.linspace(-3,3,n)
+    labels=(np.arange(n)%2).astype(int)
     frame=pd.DataFrame({
         'timestamp':ts,
         'feature_a':x,
         'feature_b':np.sin(np.arange(n)/5),
-        'label__n_bar_direction__nbar-direction-v1':(x>0).astype(int),
+        'label__n_bar_direction__nbar-direction-v1':labels,
     })
     return DevelopmentDataset(
         frame=frame,
