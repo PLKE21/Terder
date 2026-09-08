@@ -84,6 +84,19 @@ matamaple-xm-collect `
 
 Each symbol/timeframe produces a manifest containing requested range, first/last available timestamp, bar count, quality failures and dataset SHA-256. The Parquet file is written only when the quality gate passes. A batch `data/historical/collection_manifest.json` summarizes all datasets. `--check-continuity` remains opt-in until XM session/holiday/DST behavior has been validated for the affected symbol/timeframe.
 
+## Non-mutating research-holdout proposal
+
+After all required datasets have clean manifests, inspect their common history window before freezing anything:
+
+```powershell
+matamaple-holdout-proposal `
+  --manifest data/historical/collection_manifest.json `
+  --holdout-days 180 `
+  --minimum-development-days 365
+```
+
+The command exits `0` only when all usable datasets pass quality checks and share enough common history for the configured development + holdout windows. It prints a proposed holdout start/end but **does not create or modify a holdout registry**. Exit code `2` means the data are not ready to freeze.
+
 **Do not freeze `research_holdout` merely because collection completed.** First review history depth and integrity across all required datasets; only then choose a fixed holdout boundary and freeze it before serious model selection.
 
 For CI or environments without MetaTrader 5/Streamlit, install with `pip install -e ".[dev,ml]"`. Install `.[data]` whenever Parquet historical storage is required.
