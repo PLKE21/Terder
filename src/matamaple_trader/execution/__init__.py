@@ -1,4 +1,5 @@
 from .costs import CostBreakdown, CostConfig, CostEngine, FillResult
+from .demo_sender import DemoSendResult, FBSDemoOrderSender, KillSwitch, TradeJournal
 from .guard import ExecutionContext, ExecutionDecision, FBSExecutionGuard
 from .order_adapter import (
     ExecutionMode,
@@ -15,6 +16,10 @@ __all__ = [
     "CostConfig",
     "CostEngine",
     "FillResult",
+    "DemoSendResult",
+    "FBSDemoOrderSender",
+    "KillSwitch",
+    "TradeJournal",
     "ExecutionContext",
     "ExecutionDecision",
     "FBSExecutionGuard",
