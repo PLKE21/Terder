@@ -11,18 +11,18 @@ The system produces decision-support signals only. Human users decide whether to
 - [x] 01 Foundation
 - [x] 02 MT5 Connector — read-only; real Windows/XM terminal validation pending
 - [x] 03 Time / DST Normalization
-- [x] 04 Historical Collector — implementation present; production history/session hardening still required
-- [x] 05 Data Integrity Checks — implementation present; live/session-aware hardening still required
-- [x] 06 Broker Spec Integrity — critical drift/manual revalidation path present; real XM snapshots pending
-- [x] 07 Real-Time Watcher — measurable trigger logic present; real MT5 polling validation pending
+- [x] 04 Historical Collector — raw source order/duplicates are preserved for integrity checks; real XM history-depth/session validation pending
+- [x] 05 Data Integrity Checks — duplicate/time reversal/OHLC/missing/spread/stale-tick/timeframe-alignment checks present; holiday/session calendar validation pending
+- [x] 06 Broker Spec Integrity — persistent snapshots + critical drift/manual revalidation path present; real XM snapshots pending
+- [x] 07 Real-Time Watcher — completed-bar + ATR/spread/structure/volatility triggers and stale-tick block present; real MT5 polling validation pending
 - [x] 08 Shared Pipeline Skeleton
-- [x] 09 Leakage Test Framework
-- [x] 10 Frozen Holdout Policy — policy/gate implemented; a real research holdout must be frozen from actual historical data before production training
+- [x] 09 Leakage Test Framework — embedded/suffixed target/future columns blocked
+- [x] 10 Frozen Holdout Policy — hash-protected registry/gate implemented; a real research holdout must be frozen from actual historical data before production training
 - [x] 11 Feature Engine
 - [x] 12 Label Contracts
-- [x] 13 Logistic Regression Baseline
-- [x] 14 XGBoost
-- [x] 15 LightGBM
+- [x] 13 Logistic Regression Baseline — deterministic scaling
+- [x] 14 XGBoost — raw classifier margins + explicit multiclass mapping
+- [x] 15 LightGBM — raw classifier margins + explicit multiclass mapping
 - [x] 16 Purged Validation / CPCV
 - [x] 17 Walk-Forward
 - [x] 18 Probability Calibration
@@ -54,8 +54,8 @@ The system produces decision-support signals only. Human users decide whether to
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -U pip
-pip install -e ".[dev,ml,mt5,ui]"
+pip install -e ".[dev,data,ml,mt5,ui]"
 pytest
 ```
 
-For CI or environments without MetaTrader 5/Streamlit, install with `pip install -e ".[dev,ml]"`.
+For CI or environments without MetaTrader 5/Streamlit, install with `pip install -e ".[dev,ml]"`. Install `.[data]` whenever Parquet historical storage is required.
