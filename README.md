@@ -58,4 +58,14 @@ pip install -e ".[dev,data,ml,mt5,ui]"
 pytest
 ```
 
+## Read-only XM readiness check
+
+With the XM MT5 terminal open and logged in:
+
+```powershell
+matamaple-xm-readiness --symbol EURUSD --timeframe M15 --start 2026-09-07T00:00:00+00:00 --end 2026-09-08T00:00:00+00:00 --min-bars 50
+```
+
+The command reads tick/spec/history only and prints a JSON report. Exit code `0` means the sample passed the configured readiness gates; exit code `2` means fail-safe/not ready. Use `--check-continuity` only after the requested symbol/session calendar has been validated, so normal weekend/holiday closures are not misclassified as missing bars.
+
 For CI or environments without MetaTrader 5/Streamlit, install with `pip install -e ".[dev,ml]"`. Install `.[data]` whenever Parquet historical storage is required.
