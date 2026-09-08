@@ -81,12 +81,15 @@ class XMHistoricalCollectionPipeline:
         frames: list[pd.DataFrame] = []
         cursor = start
         while cursor < end:
-            chunk_end = min(cursor + chunk, end)
-            frame = self.connector.get_rates(request.symbol, request.timeframe_code, cursor, chunk_end).copy()
+            logical_end = min(cursor + chunk, end)
+            # MT5 range endpoints can be inclusive. Query a microsecond before the
+            # logical boundary so adjacent chunks cannot manufacture duplicate bars.
+            query_end = logical_end if logical_end == end else logical_end - timedelta(microseconds=1)
+            frame = self.connector.get_rates(request.symbol, request.timeframe_code, cursor, query_end).copy()
             if not frame.empty:
                 frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
             frames.append(frame)
-            cursor = chunk_end
+            cursor = logical_end
 
         raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         report = validate_bars(
