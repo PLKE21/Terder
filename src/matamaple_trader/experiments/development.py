@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 import json
 
 import numpy as np
+import pandas as pd
 from sklearn.metrics import brier_score_loss, f1_score, precision_score, recall_score
 
 from matamaple_trader.data.development_builder import DevelopmentDataset
 from matamaple_trader.labels import TaskType
 from matamaple_trader.models import LightGBMModel, LogisticBaseline, TrainingGuard, XGBoostModel
 from matamaple_trader.models.calibration import BinaryProbabilityCalibrator, CalibrationMethod
+from matamaple_trader.validation.holdout import HoldoutRegistry
 from matamaple_trader.validation.purged import CombinatorialPurgedCV, PurgedKFold, PurgedSplitConfig
 from matamaple_trader.validation.walk_forward import ExpandingWalkForward, WalkForwardConfig
 
@@ -62,6 +65,18 @@ def _clean_matrix(dataset: DevelopmentDataset):
     return X, y
 
 
+def _assert_development_boundary(dataset: DevelopmentDataset, holdout_registry_path: str | Path) -> None:
+    policy = HoldoutRegistry(holdout_registry_path).load()
+    frozen_cutoff = datetime.fromisoformat(policy["holdout_start"]).astimezone(UTC)
+    if dataset.cutoff_timestamp.astimezone(UTC) != frozen_cutoff:
+        raise RuntimeError("holdout leakage guard: development dataset cutoff does not match frozen holdout_start")
+    if "timestamp" not in dataset.frame.columns:
+        raise ValueError("development dataset must contain timestamp")
+    ts = pd.to_datetime(dataset.frame["timestamp"], utc=True)
+    if not (ts < pd.Timestamp(frozen_cutoff)).all():
+        raise RuntimeError("holdout leakage guard: development dataset contains frozen-holdout timestamps")
+
+
 def _positive_probability(output) -> np.ndarray:
     if output.probability is None or output.classes is None:
         raise RuntimeError("binary classifier must expose probabilities and classes")
@@ -85,12 +100,12 @@ def _metrics(y_true, probability) -> MetricSet:
     )
 
 
-def _factories(contract):
+def _factories(contract, *, booster_n_estimators: int):
     # Baseline is intentionally first. Advanced models must beat it OOS to justify complexity.
     return (
         ("logistic_regression", lambda: LogisticBaseline(contract)),
-        ("xgboost", lambda: XGBoostModel(contract, n_estimators=100, max_depth=4, learning_rate=0.05)),
-        ("lightgbm", lambda: LightGBMModel(contract, n_estimators=100, max_depth=-1, learning_rate=0.05)),
+        ("xgboost", lambda: XGBoostModel(contract, n_estimators=booster_n_estimators, max_depth=4, learning_rate=0.05)),
+        ("lightgbm", lambda: LightGBMModel(contract, n_estimators=booster_n_estimators, max_depth=-1, learning_rate=0.05)),
     )
 
 
@@ -107,21 +122,26 @@ def run_development_experiment(
     wf_test_bars: int = 50,
     wf_step_bars: int | None = None,
     calibration_method: CalibrationMethod = CalibrationMethod.PLATT,
+    booster_n_estimators: int = 100,
 ) -> DevelopmentExperimentReport:
     """Run model research on the development partition only.
 
     This function never loads historical Parquet or holdout outcomes. It accepts an already
-    isolated DevelopmentDataset and uses the frozen registry only as a training authorization
-    guard. Splits are chronological/purged; shuffled train/test splitting is not supported.
+    isolated DevelopmentDataset, verifies its hard cutoff against the frozen registry, and uses
+    the registry only as a training authorization guard. Splits are chronological/purged;
+    shuffled train/test splitting is deliberately unsupported.
     """
     if label_contract.target_type != TaskType.BINARY_CLASSIFICATION:
         raise ValueError("development experiment v1 calibration supports binary classification only")
-    if dataset.cutoff_timestamp.isoformat() == "":
-        raise ValueError("dataset cutoff is required")
+    if booster_n_estimators <= 0:
+        raise ValueError("booster_n_estimators must be positive")
 
+    _assert_development_boundary(dataset, holdout_registry_path)
     X, y = _clean_matrix(dataset)
+    if set(y.unique().tolist()) != {0, 1}:
+        raise RuntimeError("binary development experiment requires both classes 0 and 1")
     n = len(X)
-    if wf_min_train_bars + wf_test_bars > n:
+    if wf_min_train_bars + label_contract.horizon_bars + wf_test_bars > n:
         raise ValueError("walk-forward configuration exceeds development rows")
 
     guard = TrainingGuard(holdout_registry_path)
@@ -140,7 +160,7 @@ def run_development_experiment(
     ))
 
     results: list[ModelDevelopmentResult] = []
-    for model_name, factory in _factories(label_contract):
+    for model_name, factory in _factories(label_contract, booster_n_estimators=booster_n_estimators):
         oof_p = np.full(n, np.nan, dtype=float)
         purged_folds = 0
         for train_idx, test_idx in purged.split(X, event_end_index=event_end):
@@ -149,8 +169,7 @@ def run_development_experiment(
             model = factory().fit(X.iloc[train_idx], y.iloc[train_idx], guard=guard)
             oof_p[test_idx] = _positive_probability(model.predict_output(X.iloc[test_idx]))
             purged_folds += 1
-        valid = np.isfinite(oof_p)
-        if not valid.all():
+        if not np.isfinite(oof_p).all():
             raise RuntimeError("purged OOF predictions did not cover every development row")
         purged_metrics = _metrics(y, oof_p)
 
