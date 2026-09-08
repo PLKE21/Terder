@@ -42,7 +42,7 @@ class ShadowStore:
         text=json.dumps(payload,sort_keys=True,separators=(',',':'))
         return text,hashlib.sha256(text.encode()).hexdigest()
 
-    def append_prediction(self, result: SignalResult) -> int:
+    def append_prediction(self, result: SignalResult, *, observation: dict[str, object] | None = None) -> int:
         payload = {
             "raw_score": result.raw_score,
             "calibrated_probability": result.calibrated_probability,
@@ -58,6 +58,7 @@ class ShadowStore:
             "spread_state": result.spread_state,
             "portfolio_warning": result.portfolio_warning,
             "operational_state": result.operational_state.value,
+            "observation": observation or {},
         }
         text,digest=self._encode(payload)
         with self._connect() as con:
@@ -78,13 +79,25 @@ class ShadowStore:
             except sqlite3.IntegrityError as exc:
                 raise RuntimeError("shadow outcome already attached or prediction does not exist") from exc
 
+    def pending_outcomes(self) -> tuple[dict[str, object], ...]:
+        with self._connect() as con:
+            rows=con.execute("SELECT p.id,p.timestamp,p.symbol,p.signal,p.pipeline_version,p.payload,p.payload_sha256 FROM predictions p LEFT JOIN outcomes o ON o.prediction_id=p.id WHERE o.prediction_id IS NULL ORDER BY p.id").fetchall()
+        result=[]
+        for row in rows:
+            payload=str(row[5]); digest=str(row[6] or '')
+            if digest and hashlib.sha256(payload.encode()).hexdigest()!=digest:
+                raise RuntimeError('shadow prediction integrity check failed')
+            result.append({'prediction_id':int(row[0]),'timestamp':str(row[1]),'symbol':str(row[2]),'signal':str(row[3]),'pipeline_version':str(row[4]),'payload':json.loads(payload)})
+        return tuple(result)
+
     def list_predictions(self) -> tuple[ShadowPrediction, ...]:
         with self._connect() as con:
             rows = con.execute("SELECT id,timestamp,symbol,signal,pipeline_version FROM predictions ORDER BY id").fetchall()
         return tuple(ShadowPrediction(int(r[0]), str(r[1]), str(r[2]), str(r[3]), str(r[4])) for r in rows)
 
-    def stats(self) -> dict[str,int]:
+    def stats(self) -> dict[str,float|int]:
         with self._connect() as con:
             predictions=int(con.execute('SELECT COUNT(*) FROM predictions').fetchone()[0])
             outcomes=int(con.execute('SELECT COUNT(*) FROM outcomes').fetchone()[0])
-        return {'predictions':predictions,'outcomes':outcomes}
+        coverage=float(outcomes/predictions) if predictions else 0.0
+        return {'predictions':predictions,'outcomes':outcomes,'outcome_coverage':coverage}
