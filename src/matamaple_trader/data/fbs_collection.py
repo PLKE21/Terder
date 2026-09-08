@@ -34,6 +34,7 @@ class CollectionRequest:
 
 @dataclass(frozen=True, slots=True)
 class DatasetManifest:
+    broker: str
     symbol: str
     timeframe: str
     requested_start: datetime
@@ -63,14 +64,17 @@ def _frame_hash(frame: pd.DataFrame) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-class XMHistoricalCollectionPipeline:
-    """Read-only, integrity-gated historical collection.
+class FBSHistoricalCollectionPipeline:
+    """FBS-first MT5 historical collector with integrity gates.
 
-    Raw chunks are validated before canonicalization. A Parquet dataset is written only
-    when the combined raw data passes the configured quality gate.
+    All timestamps are normalized to UTC internally. The pipeline never assumes a
+    hard-coded FBS server UTC offset; session/timezone interpretation belongs to
+    the runtime time-normalization layer.
     """
 
-    def __init__(self, connector, root: str | Path = "data/historical") -> None:
+    broker_name = "FBS"
+
+    def __init__(self, connector, root: str | Path = "data/fbs/historical") -> None:
         self.connector = connector
         self.root = Path(root)
 
@@ -82,8 +86,6 @@ class XMHistoricalCollectionPipeline:
         cursor = start
         while cursor < end:
             logical_end = min(cursor + chunk, end)
-            # MT5 range endpoints can be inclusive. Query a microsecond before the
-            # logical boundary so adjacent chunks cannot manufacture duplicate bars.
             query_end = logical_end if logical_end == end else logical_end - timedelta(microseconds=1)
             frame = self.connector.get_rates(request.symbol, request.timeframe_code, cursor, query_end).copy()
             if not frame.empty:
@@ -112,6 +114,7 @@ class XMHistoricalCollectionPipeline:
             sha = _frame_hash(canonical)
 
         manifest = DatasetManifest(
+            broker=self.broker_name,
             symbol=request.symbol,
             timeframe=request.timeframe_name,
             requested_start=start,

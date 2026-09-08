@@ -10,7 +10,7 @@ import sys
 import pandas as pd
 
 from matamaple_trader.adapters.mt5_connector import MT5Connector
-from matamaple_trader.data.xm_collection import CollectionRequest, XMHistoricalCollectionPipeline
+from matamaple_trader.data.fbs_collection import CollectionRequest, FBSHistoricalCollectionPipeline
 
 TIMEFRAME_DELTAS = {
     "M1": pd.Timedelta("1min"),
@@ -43,16 +43,20 @@ def _jsonable_manifest(manifest) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Read-only XM historical collector. Writes only datasets that pass integrity gates.")
-    parser.add_argument("--symbols", required=True, help="Comma-separated symbols, e.g. EURUSD,XAUUSD")
+    parser = argparse.ArgumentParser(description="Read-only FBS MT5 historical collector with integrity gates.")
+    parser.add_argument("--symbols", required=True, help="Comma-separated FBS MT5 symbols, e.g. EURUSD,XAUUSD")
     parser.add_argument("--timeframes", required=True, help="Comma-separated: M1,M5,M15,M30,H1,H4,D1")
     parser.add_argument("--start", required=True, type=_parse_utc)
     parser.add_argument("--end", required=True, type=_parse_utc)
-    parser.add_argument("--root", default="data/historical")
+    parser.add_argument("--root", default="data/fbs/historical")
     parser.add_argument("--chunk-days", type=int, default=30)
     parser.add_argument("--min-bars", type=int, default=100)
     parser.add_argument("--max-spread-points", type=int, default=None)
-    parser.add_argument("--check-continuity", action="store_true", help="Enable exact bar-gap checks only after validating XM session/holiday behavior for the period.")
+    parser.add_argument(
+        "--check-continuity",
+        action="store_true",
+        help="Enable exact bar-gap checks only after validating FBS session/holiday behavior for the period.",
+    )
     args = parser.parse_args(argv)
 
     symbols = _csv(args.symbols)
@@ -70,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         raise exc
 
     connector = MT5Connector(mt5)
-    pipeline = XMHistoricalCollectionPipeline(connector, args.root)
+    pipeline = FBSHistoricalCollectionPipeline(connector, args.root)
     results: list[dict] = []
     all_ok = True
     try:
@@ -95,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         connector.close()
 
     index = {
+        "broker": "FBS",
         "generated_at": datetime.now(UTC).isoformat(),
         "all_quality_ok": all_ok,
         "datasets": results,

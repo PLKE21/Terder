@@ -29,7 +29,7 @@ class FakeConnector:
         })
 
 
-def test_readiness_check_allows_clean_read_only_market_data(tmp_path):
+def test_readiness_check_allows_clean_fbs_market_data(tmp_path):
     connector=FakeConnector(1)
     report=run_readiness_check(
         connector,
@@ -43,6 +43,7 @@ def test_readiness_check_allows_clean_read_only_market_data(tmp_path):
         broker_history_path=tmp_path/'broker.jsonl',
         now_utc=connector.now,
     )
+    assert report.broker == 'FBS'
     assert report.ready_for_collection
     assert report.quality_failures==()
     assert report.continuity_checked
