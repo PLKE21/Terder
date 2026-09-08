@@ -75,8 +75,11 @@ def test_drift_hysteresis_and_critical_broker_bypass():
     assert monitor.observe("EURUSD:model", breach) is OperationalState.ACTIVE
     assert monitor.observe("EURUSD:model", breach) is OperationalState.DEGRADED
 
-    critical = DriftMonitor()
-    assert critical.observe("EURUSD:model", DriftObservation(critical_broker_spec=True)) is OperationalState.DEGRADED
+    critical = DriftMonitor(DriftConfig(recovery_persistence=1))
+    key = "EURUSD:model"
+    assert critical.observe(key, DriftObservation(critical_broker_spec=True)) is OperationalState.DEGRADED
+    assert critical.observe(key, DriftObservation()) is OperationalState.DEGRADED
+    assert critical.manual_revalidate(key) is OperationalState.ACTIVE
 
 
 def test_drift_paused_recovers_in_stages():
