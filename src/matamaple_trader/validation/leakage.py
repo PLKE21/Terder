@@ -5,23 +5,20 @@ import pandas as pd
 class LeakageError(RuntimeError):
     pass
 
-FORBIDDEN_FEATURE_TOKENS={
-    'label','target','future','forwardreturn','forward_return','outcome',
-    'realizedreturn','realized_return','realizedr','realized_r',
-}
+FORBIDDEN_FEATURE_TOKENS={'label','target','future','outcome'}
+FORBIDDEN_COMPACT_MARKERS=('forwardreturn','realizedreturn','realizedr')
 
-def _normalized_tokens(name:object)->set[str]:
+def _normalized_tokens(name:object)->tuple[set[str],str]:
     text=str(name).strip().lower()
     compact=re.sub(r'[^a-z0-9]+','',text)
     tokens=set(filter(None,re.split(r'[^a-z0-9]+',text)))
-    tokens.add(compact)
-    return tokens
+    return tokens,compact
 
 def assert_no_label_features(columns)->None:
     bad=[]
     for column in columns:
-        tokens=_normalized_tokens(column)
-        if tokens & FORBIDDEN_FEATURE_TOKENS or any(marker in tokens for marker in {'forwardreturn','realizedreturn','realizedr'}):
+        tokens,compact=_normalized_tokens(column)
+        if tokens & FORBIDDEN_FEATURE_TOKENS or any(marker in compact for marker in FORBIDDEN_COMPACT_MARKERS):
             bad.append(column)
     if bad:
         raise LeakageError(f'label/future-derived feature columns forbidden: {bad}')
