@@ -42,11 +42,13 @@ The system produces decision-support signals only. Human users decide whether to
 ## Critical gates still required before real use
 
 1. Collect and integrity-check sufficient real XM historical data.
-2. Freeze the real `research_holdout` before serious model selection/training.
-3. Run Purged CV/CPCV/Walk-Forward/frozen holdout without tuning on holdout outcomes.
-4. Run real XM Shadow Mode and validate prediction, calibration, grade and drift behavior.
-5. Validate expected versus manually executed XM Demo fills and refine cost assumptions from development/demo evidence only.
-6. Do not enable automatic order execution; the project remains signal-only.
+2. Review all dataset manifests and common coverage.
+3. Explicitly freeze the real `research_holdout` once, before serious model selection/training.
+4. Build development-only features/labels with the frozen holdout excluded before feature and label generation.
+5. Run Purged CV/CPCV/Walk-Forward/frozen holdout without tuning on holdout outcomes.
+6. Run real XM Shadow Mode and validate prediction, calibration, grade and drift behavior.
+7. Validate expected versus manually executed XM Demo fills and refine cost assumptions from development/demo evidence only.
+8. Do not enable automatic order execution; the project remains signal-only.
 
 ## Local setup (Windows 11)
 
@@ -84,9 +86,19 @@ matamaple-xm-collect `
 
 Each symbol/timeframe produces a manifest containing requested range, first/last available timestamp, bar count, quality failures and dataset SHA-256. The Parquet file is written only when the quality gate passes. A batch `data/historical/collection_manifest.json` summarizes all datasets. `--check-continuity` remains opt-in until XM session/holiday/DST behavior has been validated for the affected symbol/timeframe.
 
+## Dataset review
+
+Review the complete batch before proposing a holdout:
+
+```powershell
+matamaple-dataset-review --manifest data/historical/collection_manifest.json
+```
+
+Exit code `0` requires every listed dataset to be clean and to have a recorded Parquet artifact + SHA-256 plus a valid common history window. This command is read-only.
+
 ## Non-mutating research-holdout proposal
 
-After all required datasets have clean manifests, inspect their common history window before freezing anything:
+After dataset review succeeds:
 
 ```powershell
 matamaple-holdout-proposal `
@@ -95,8 +107,23 @@ matamaple-holdout-proposal `
   --minimum-development-days 365
 ```
 
-The command exits `0` only when all usable datasets pass quality checks and share enough common history for the configured development + holdout windows. It prints a proposed holdout start/end but **does not create or modify a holdout registry**. Exit code `2` means the data are not ready to freeze.
+The command prints a proposed holdout start/end but **does not create or modify a holdout registry**.
 
-**Do not freeze `research_holdout` merely because collection completed.** First review history depth and integrity across all required datasets; only then choose a fixed holdout boundary and freeze it before serious model selection.
+## Explicit research-holdout freeze
+
+Only after reviewing the proposal from real XM data, freeze the boundary once:
+
+```powershell
+matamaple-freeze-holdout `
+  --manifest data/historical/collection_manifest.json `
+  --holdout-days 180 `
+  --minimum-development-days 365 `
+  --policy-version research-holdout-v1 `
+  --confirm-freeze
+```
+
+The default registry path is `data/validation/research_holdout.json`. It is hash-protected and cannot be overwritten through the registry API. **Do not run this command on mock/test manifests or simply because collection completed.** Once a real research holdout is frozen, never move or retune its boundary based on outcomes.
+
+The development dataset builder reads the frozen registry, removes all rows at or after `holdout_start` first, and only then runs feature and label generation. Label-horizon rows that would require data beyond the development partition remain unavailable and are dropped rather than reading into the frozen holdout.
 
 For CI or environments without MetaTrader 5/Streamlit, install with `pip install -e ".[dev,ml]"`. Install `.[data]` whenever Parquet historical storage is required.
