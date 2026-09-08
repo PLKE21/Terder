@@ -15,7 +15,7 @@ class Tick:
     def spread(self)->float: return self.ask-self.bid
 @dataclass(frozen=True, slots=True)
 class SymbolSpec:
-    symbol: str; digits:int; point:float; tick_size:float; tick_value:float; contract_size:float; volume_min:float; volume_max:float; volume_step:float; swap_long:float; swap_short:float
+    symbol: str; digits:int; point:float; tick_size:float; tick_value:float; contract_size:float; volume_min:float; volume_max:float; volume_step:float; swap_long:float; swap_short:float; trading_sessions: tuple[str,...]=()
 @dataclass(frozen=True, slots=True)
 class MarketSnapshot:
     timestamp: datetime; symbol: str; timeframe: str; bars: tuple[Bar,...]; tick: Tick|None=None; metadata: dict[str, object]=field(default_factory=dict)
