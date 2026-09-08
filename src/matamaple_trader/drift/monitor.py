@@ -32,7 +32,7 @@ class DriftObservation:
 
 
 class DriftMonitor:
-    """ACTIVE/DEGRADED/PAUSED with persistence; broker-spec critical drift bypasses hysteresis."""
+    """ACTIVE/DEGRADED/PAUSED with hysteresis and manual broker-spec recovery."""
 
     def __init__(self, config: DriftConfig = DriftConfig()) -> None:
         self.config = config
@@ -40,17 +40,31 @@ class DriftMonitor:
         self._breach_count: dict[str, int] = {}
         self._severe_count: dict[str, int] = {}
         self._recovery_count: dict[str, int] = {}
+        self._critical_latch: set[str] = set()
 
     def state(self, key: str) -> OperationalState:
         return self._state.get(key, OperationalState.ACTIVE)
 
+    def manual_revalidate(self, key: str) -> OperationalState:
+        self._critical_latch.discard(key)
+        self._breach_count[key] = 0
+        self._severe_count[key] = 0
+        self._recovery_count[key] = 0
+        self._state[key] = OperationalState.ACTIVE
+        return OperationalState.ACTIVE
+
     def observe(self, key: str, observation: DriftObservation) -> OperationalState:
         current = self.state(key)
         if observation.critical_broker_spec:
+            self._critical_latch.add(key)
             self._state[key] = OperationalState.DEGRADED
             self._breach_count[key] = 0
             self._severe_count[key] = 0
             self._recovery_count[key] = 0
+            return OperationalState.DEGRADED
+
+        if key in self._critical_latch:
+            self._state[key] = OperationalState.DEGRADED
             return OperationalState.DEGRADED
 
         if observation.breached:
