@@ -77,6 +77,12 @@ def _assert_development_boundary(dataset: DevelopmentDataset, holdout_registry_p
         raise RuntimeError("holdout leakage guard: development dataset contains frozen-holdout timestamps")
 
 
+def _assert_two_class_fold(y, indices, *, stage: str) -> None:
+    classes=set(np.asarray(y.iloc[indices],dtype=int).tolist())
+    if classes != {0,1}:
+        raise RuntimeError(f"{stage} training fold does not contain both classes 0 and 1; revise the validation window or dataset")
+
+
 def _positive_probability(output) -> np.ndarray:
     if output.probability is None or output.classes is None:
         raise RuntimeError("binary classifier must expose probabilities and classes")
@@ -101,7 +107,6 @@ def _metrics(y_true, probability) -> MetricSet:
 
 
 def _factories(contract, *, booster_n_estimators: int):
-    # Baseline is intentionally first. Advanced models must beat it OOS to justify complexity.
     return (
         ("logistic_regression", lambda: LogisticBaseline(contract)),
         ("xgboost", lambda: XGBoostModel(contract, n_estimators=booster_n_estimators, max_depth=4, learning_rate=0.05)),
@@ -124,13 +129,7 @@ def run_development_experiment(
     calibration_method: CalibrationMethod = CalibrationMethod.PLATT,
     booster_n_estimators: int = 100,
 ) -> DevelopmentExperimentReport:
-    """Run model research on the development partition only.
-
-    This function never loads historical Parquet or holdout outcomes. It accepts an already
-    isolated DevelopmentDataset, verifies its hard cutoff against the frozen registry, and uses
-    the registry only as a training authorization guard. Splits are chronological/purged;
-    shuffled train/test splitting is deliberately unsupported.
-    """
+    """Run model research on development data only; frozen holdout outcomes are never loaded."""
     if label_contract.target_type != TaskType.BINARY_CLASSIFICATION:
         raise ValueError("development experiment v1 calibration supports binary classification only")
     if booster_n_estimators <= 0:
@@ -166,6 +165,7 @@ def run_development_experiment(
         for train_idx, test_idx in purged.split(X, event_end_index=event_end):
             if len(train_idx) == 0:
                 raise RuntimeError("purged split produced empty training set")
+            _assert_two_class_fold(y,train_idx,stage='purged')
             model = factory().fit(X.iloc[train_idx], y.iloc[train_idx], guard=guard)
             oof_p[test_idx] = _positive_probability(model.predict_output(X.iloc[test_idx]))
             purged_folds += 1
@@ -180,6 +180,7 @@ def run_development_experiment(
         wf_p: list[float] = []
         wf_windows = 0
         for train_idx, test_idx in wf.split(X):
+            _assert_two_class_fold(y,train_idx,stage='walk_forward')
             model = factory().fit(X.iloc[train_idx], y.iloc[train_idx], guard=guard)
             probability = _positive_probability(model.predict_output(X.iloc[test_idx]))
             wf_y.extend(y.iloc[test_idx].tolist())
@@ -200,7 +201,6 @@ def run_development_experiment(
             walk_forward_windows=wf_windows,
         ))
 
-    # Selection is development-only: prioritize WF F1, then lower WF Brier, then lower calibrated OOF Brier.
     selected = max(results, key=lambda r: (r.walk_forward.f1, -r.walk_forward.brier, -r.calibrated_oof_brier))
     return DevelopmentExperimentReport(
         label_version=label_contract.label_version,
