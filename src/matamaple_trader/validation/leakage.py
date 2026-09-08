@@ -1,14 +1,43 @@
 from __future__ import annotations
+import re
 import pandas as pd
 
-class LeakageError(RuntimeError): pass
-LABEL_PREFIXES=('label','target','future_')
+class LeakageError(RuntimeError):
+    pass
+
+FORBIDDEN_FEATURE_TOKENS={
+    'label','target','future','forwardreturn','forward_return','outcome',
+    'realizedreturn','realized_return','realizedr','realized_r',
+}
+
+def _normalized_tokens(name:object)->set[str]:
+    text=str(name).strip().lower()
+    compact=re.sub(r'[^a-z0-9]+','',text)
+    tokens=set(filter(None,re.split(r'[^a-z0-9]+',text)))
+    tokens.add(compact)
+    return tokens
+
 def assert_no_label_features(columns)->None:
-    bad=[c for c in columns if str(c).lower().startswith(LABEL_PREFIXES)]
-    if bad: raise LeakageError(f'label-derived feature columns forbidden: {bad}')
+    bad=[]
+    for column in columns:
+        tokens=_normalized_tokens(column)
+        if tokens & FORBIDDEN_FEATURE_TOKENS or any(marker in tokens for marker in {'forwardreturn','realizedreturn','realizedr'}):
+            bad.append(column)
+    if bad:
+        raise LeakageError(f'label/future-derived feature columns forbidden: {bad}')
+
 def assert_monotonic_time(frame:pd.DataFrame)->None:
+    if 'timestamp' not in frame:
+        raise LeakageError('timestamp column is required')
     ts=pd.to_datetime(frame['timestamp'],utc=True)
-    if not ts.is_monotonic_increasing or ts.duplicated().any(): raise LeakageError('timestamps must be strictly chronological and unique')
+    if not ts.is_monotonic_increasing or ts.duplicated().any():
+        raise LeakageError('timestamps must be strictly chronological and unique')
+
 def backward_asof_join(left:pd.DataFrame,right:pd.DataFrame,on:str='timestamp')->pd.DataFrame:
-    l=left.sort_values(on).copy(); r=right.sort_values(on).copy()
+    if on not in left or on not in right:
+        raise LeakageError(f'{on} must exist in both frames')
+    l=left.copy(); r=right.copy()
+    l[on]=pd.to_datetime(l[on],utc=True); r[on]=pd.to_datetime(r[on],utc=True)
+    assert_monotonic_time(l.rename(columns={on:'timestamp'}) if on!='timestamp' else l)
+    assert_monotonic_time(r.rename(columns={on:'timestamp'}) if on!='timestamp' else r)
     return pd.merge_asof(l,r,on=on,direction='backward',allow_exact_matches=True)
