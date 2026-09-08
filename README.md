@@ -4,20 +4,26 @@ Local-first Quant/ML **signal-only** platform for XM / MetaTrader 5.
 
 ## Safety contract
 
-The system produces decision-support signals only. Human users decide whether to execute trades manually in MT5. Automatic order execution is forbidden; `mt5.order_send()` must not exist in the codebase.
+The system produces decision-support signals only. Human users decide whether to execute trades manually in MT5. Automatic order execution is forbidden; `mt5.order_send()` must not exist in the source implementation.
+
+## V1 code status
+
+The V1 code path is implemented through data readiness, gated collection, leakage controls, development-only model research, candidate lock, one-shot frozen holdout evaluation, shadow storage/readiness, drift monitoring, dashboard, manual XM demo fill validation and a final release-readiness gate.
+
+This does **not** mean the system is validated for real-money use. Real XM historical collection, the real frozen research holdout, real shadow observations and manually executed XM demo fills still have to be produced on the user's Windows/XM environment before the final readiness command can pass.
 
 ## Build order status
 
 - [x] 01 Foundation
 - [x] 02 MT5 Connector — read-only; real Windows/XM terminal validation pending
 - [x] 03 Time / DST Normalization
-- [x] 04 Historical Collector — raw source order/duplicates preserved; gated chunked XM collection + manifests present; real XM history-depth/session validation pending
-- [x] 05 Data Integrity Checks — duplicate/time reversal/OHLC/missing/spread/stale-tick/timeframe-alignment checks present; holiday/session calendar validation pending
-- [x] 06 Broker Spec Integrity — persistent snapshots + critical drift/manual revalidation path present; real XM snapshots pending
-- [x] 07 Real-Time Watcher — completed-bar + ATR/spread/structure/volatility triggers and stale-tick block present; real MT5 polling validation pending
+- [x] 04 Historical Collector — raw source order/duplicates preserved; gated chunked XM collection + manifests present
+- [x] 05 Data Integrity Checks — duplicate/time reversal/OHLC/missing/spread/stale-tick/timeframe-alignment checks present
+- [x] 06 Broker Spec Integrity — persistent snapshots + critical drift/manual revalidation path present
+- [x] 07 Real-Time Watcher — completed-bar + ATR/spread/structure/volatility triggers and stale-tick block present
 - [x] 08 Shared Pipeline Skeleton
-- [x] 09 Leakage Test Framework — embedded/suffixed target/future columns blocked
-- [x] 10 Frozen Holdout Policy — hash-protected registry/gate implemented; a real research holdout must be frozen from actual historical data before production training
+- [x] 09 Leakage Test Framework
+- [x] 10 Frozen Holdout Policy — hash-protected registry/gate
 - [x] 11 Feature Engine
 - [x] 12 Label Contracts
 - [x] 13 Logistic Regression Baseline — deterministic scaling
@@ -34,22 +40,26 @@ The system produces decision-support signals only. Human users decide whether to
 - [x] 24 Grade Validation
 - [x] 25 Portfolio Exposure Warning
 - [x] 26 Backtest using Shared Pipeline
-- [x] 27 Shadow Mode using Shared Pipeline — storage/runner implemented; real shadow observations pending
+- [x] 27 Shadow Mode using Shared Pipeline — append-only storage + payload hashes
 - [x] 28 Drift Monitoring
-- [x] 29 Dashboard — optional Streamlit renderer
-- [x] 30 XM Demo Validation framework — expected-vs-actual manual fill comparison implemented; real XM demo validation pending
+- [x] 29 Dashboard
+- [x] 30 XM Demo Validation framework — manual fills only
+- [x] Candidate lock before holdout evaluation
+- [x] One-shot frozen holdout evaluation with development-only OOF calibration
+- [x] Shadow/demo/release readiness gates
 
-## Critical gates still required before real use
+## Required real validation sequence
 
-1. Collect and integrity-check sufficient real XM historical data.
-2. Review all dataset manifests and common coverage.
-3. Explicitly freeze the real `research_holdout` once, before serious model selection/training.
-4. Build development-only features/labels with the frozen holdout excluded before feature and label generation.
-5. Run Purged CV/CPCV/Walk-Forward model comparison and probability calibration on development data only.
-6. Evaluate the selected production candidate on the frozen holdout once without retuning from its outcome.
-7. Run real XM Shadow Mode and validate prediction, calibration, grade and drift behavior.
-8. Validate expected versus manually executed XM Demo fills and refine cost assumptions from development/demo evidence only.
-9. Do not enable automatic order execution; the project remains signal-only.
+1. Run read-only XM readiness.
+2. Collect sufficient real XM history and pass integrity review.
+3. Propose and explicitly freeze the real research holdout once.
+4. Run development-only model research. Do not inspect holdout outcomes.
+5. Lock the selected candidate/config.
+6. Evaluate the frozen holdout once. Do not retune from its outcome.
+7. Run real XM Shadow Mode and attach outcomes later.
+8. Record manually executed XM Demo fills and summarize expected-vs-actual costs.
+9. Run final release readiness. Until it passes, treat the system as research/shadow/demo only.
+10. Automatic order execution remains forbidden in all cases.
 
 ## Local setup (Windows 11)
 
@@ -61,19 +71,13 @@ pip install -e ".[dev,data,ml,mt5,ui]"
 pytest
 ```
 
-## Read-only XM readiness check
-
-With the XM MT5 terminal open and logged in:
+## 1. Read-only XM readiness
 
 ```powershell
 matamaple-xm-readiness --symbol EURUSD --timeframe M15 --start 2026-09-07T00:00:00+00:00 --end 2026-09-08T00:00:00+00:00 --min-bars 50
 ```
 
-The command reads tick/spec/history only and prints a JSON report. Exit code `0` means the sample passed the configured readiness gates; exit code `2` means fail-safe/not ready. Use `--check-continuity` only after the requested symbol/session calendar has been validated, so normal weekend/holiday closures are not misclassified as missing bars.
-
-## Gated real XM historical collection
-
-After readiness succeeds, collect one or more symbols/timeframes through the read-only chunked collector:
+## 2. Gated historical collection
 
 ```powershell
 matamaple-xm-collect `
@@ -85,32 +89,16 @@ matamaple-xm-collect `
   --min-bars 500
 ```
 
-Each symbol/timeframe produces a manifest containing requested range, first/last available timestamp, bar count, quality failures and dataset SHA-256. The Parquet file is written only when the quality gate passes. A batch `data/historical/collection_manifest.json` summarizes all datasets. `--check-continuity` remains opt-in until XM session/holiday/DST behavior has been validated for the affected symbol/timeframe.
-
-## Dataset review
+## 3. Dataset review and holdout freeze
 
 ```powershell
 matamaple-dataset-review --manifest data/historical/collection_manifest.json
-```
 
-Exit code `0` requires every listed dataset to be clean and to have a recorded Parquet artifact + SHA-256 plus a valid common history window. This command is read-only.
-
-## Non-mutating research-holdout proposal
-
-```powershell
 matamaple-holdout-proposal `
   --manifest data/historical/collection_manifest.json `
   --holdout-days 180 `
   --minimum-development-days 365
-```
 
-The command prints a proposed holdout start/end but **does not create or modify a holdout registry**.
-
-## Explicit research-holdout freeze
-
-Only after reviewing the proposal from real XM data, freeze the boundary once:
-
-```powershell
 matamaple-freeze-holdout `
   --manifest data/historical/collection_manifest.json `
   --holdout-days 180 `
@@ -119,13 +107,9 @@ matamaple-freeze-holdout `
   --confirm-freeze
 ```
 
-The default registry path is `data/validation/research_holdout.json`. It is hash-protected and cannot be overwritten through the registry API. **Do not run this command on mock/test manifests or simply because collection completed.** Once a real research holdout is frozen, never move or retune its boundary based on outcomes.
+The frozen registry is hash-protected and cannot be overwritten through the registry API. Never move the boundary based on outcomes.
 
-The development dataset builder reads the frozen registry, removes all rows at or after `holdout_start` first, and only then runs feature and label generation. Label-horizon rows that would require data beyond the development partition remain unavailable and are dropped rather than reading into the frozen holdout.
-
-## Development-only model research
-
-After a real frozen registry exists, run model research on one clean Parquet dataset:
+## 4. Development-only experiment
 
 ```powershell
 matamaple-development-experiment `
@@ -140,8 +124,57 @@ matamaple-development-experiment `
   --output artifacts/EURUSD_M15_development_experiment.json
 ```
 
-The runner verifies that the development cutoff exactly matches frozen `holdout_start` and rejects any dataset row at or beyond that boundary. It compares Logistic Regression first, then XGBoost and LightGBM, using Purged CV OOF predictions, CPCV path accounting, expanding Walk-Forward evaluation and OOF probability calibration. There is no shuffled split option. Model selection is development-only and the CLI summary reports `holdout_evaluated: false`; frozen holdout outcomes are not loaded in this step.
+The experiment uses development data only, Purged CV/CPCV/expanding Walk-Forward and OOF calibration. There is no shuffled split option.
 
-Current v1 experiment calibration is binary-classification only. Multiclass calibration remains a separate hardening task before using `P(BUY)/P(NEUTRAL)/P(SELL)` in production.
+## 5. Lock candidate before holdout
+
+```powershell
+matamaple-lock-candidate `
+  --development-report artifacts/EURUSD_M15_development_experiment.json `
+  --feature-version features-v1 `
+  --pipeline-version v0.1.0 `
+  --horizon-bars 4 `
+  --confirm-lock
+```
+
+The candidate lock records model choice, label/version, feature version, calibration method, validation parameters, pipeline version and SHA-256 of the development report. It is immutable through the registry API.
+
+## 6. Evaluate frozen holdout once
+
+```powershell
+matamaple-evaluate-holdout `
+  --parquet data/historical/EURUSD/M15.parquet `
+  --holdout-registry data/validation/research_holdout.json `
+  --candidate-lock data/validation/candidate_lock.json `
+  --output artifacts/frozen_holdout_evaluation.json `
+  --confirm-one-shot
+```
+
+Calibration is fitted from development OOF predictions only. The output is hash-protected, marks `tuning_allowed_after_evaluation: false`, and an existing report is never overwritten.
+
+## 7. Shadow + XM Demo evidence
+
+Shadow predictions remain append-only and outcomes are attached separately. Shadow prediction/outcome payloads carry SHA-256 hashes, and SQLite foreign-key checking is enabled on every connection.
+
+XM Demo validation compares **manually executed** fills with expected fills. No order-placement API exists in the demo validator.
+
+## 8. Final release-readiness gate
+
+```powershell
+matamaple-release-readiness `
+  --holdout-report artifacts/frozen_holdout_evaluation.json `
+  --shadow-db data/shadow/shadow.sqlite `
+  --demo-summary artifacts/xm_demo_summary.json `
+  --min-shadow-predictions 200 `
+  --min-shadow-outcome-coverage 0.8 `
+  --min-manual-fills 30 `
+  --max-mean-abs-slippage-points 5
+```
+
+The report distinguishes `code_path_complete` from `validated_for_real_use`. It always reports `auto_trading_enabled: false`. Missing real evidence fails safe with exit code `2`.
+
+## Current limitations before real release-candidate status
+
+Real XM session/holiday/DST behavior must still be validated per affected symbol/timeframe. Real broker-spec snapshots must be collected. Current V1 experiment/one-shot holdout calibration is binary-classification only; multiclass probability calibration must be hardened separately before production use of `P(BUY)/P(NEUTRAL)/P(SELL)`. Real shadow observations and manual XM Demo fill evidence are not present in the repository and cannot be fabricated by CI.
 
 For CI or environments without MetaTrader 5/Streamlit, install with `pip install -e ".[dev,ml]"`. Install `.[data]` whenever Parquet historical storage is required.
