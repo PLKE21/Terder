@@ -25,6 +25,7 @@ matamaple-lock-candidate = "matamaple_trader.validation.candidate_lock_cli:main"
 matamaple-evaluate-holdout = "matamaple_trader.validation.holdout_eval_cli:main"
 matamaple-release-readiness = "matamaple_trader.validation.release_readiness_cli:main"
 matamaple-demo-readiness = "matamaple_trader.demo.readiness_cli:main"
+matamaple-dashboard = "matamaple_trader.dashboard.cli:main"
 
 [project.optional-dependencies]
 mt5 = ["MetaTrader5>=5.0.45"]
