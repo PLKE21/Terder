@@ -20,6 +20,7 @@ matamaple-xm-collect = "matamaple_trader.data.collection_cli:main"
 matamaple-dataset-review = "matamaple_trader.validation.dataset_review_cli:main"
 matamaple-holdout-proposal = "matamaple_trader.validation.holdout_cli:main"
 matamaple-freeze-holdout = "matamaple_trader.validation.freeze_holdout_cli:main"
+matamaple-development-experiment = "matamaple_trader.experiments.cli:main"
 
 [project.optional-dependencies]
 mt5 = ["MetaTrader5>=5.0.45"]
