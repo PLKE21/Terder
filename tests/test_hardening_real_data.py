@@ -13,6 +13,7 @@ from matamaple_trader.labels import n_bar_direction_contract
 from matamaple_trader.models import LightGBMModel, TrainingGuard, XGBoostModel
 from matamaple_trader.realtime.watcher import WatcherConfig, should_evaluate
 from matamaple_trader.validation.holdout import HoldoutPolicy, HoldoutRegistry
+from matamaple_trader.validation.leakage import LeakageError, assert_no_label_features
 
 
 class RawAdapter:
@@ -89,6 +90,13 @@ def test_watcher_blocks_stale_tick_and_supports_volatility_percentile():
     assert not blocked.evaluate and blocked.blocked_reason=='stale_tick'
     vol=should_evaluate(completed_bar=False,current_price=100,last_eval_price=100,atr=1,current_spread=1,rolling_spread_median=1,volatility_percentile=0.97,config=config)
     assert vol.evaluate and 'volatility_percentile' in vol.reasons
+
+
+def test_leakage_guard_blocks_embedded_and_suffixed_target_names():
+    for column in ('rsi_target','forward_return_4','future_price','realized_r_after_costs'):
+        with pytest.raises(LeakageError):
+            assert_no_label_features(['rsi',column])
+    assert_no_label_features(['rsi','atr_pct','ema_spread_pct'])
 
 
 def test_frozen_holdout_detects_tampering_and_blocks_development_access(tmp_path):
