@@ -45,10 +45,11 @@ The system produces decision-support signals only. Human users decide whether to
 2. Review all dataset manifests and common coverage.
 3. Explicitly freeze the real `research_holdout` once, before serious model selection/training.
 4. Build development-only features/labels with the frozen holdout excluded before feature and label generation.
-5. Run Purged CV/CPCV/Walk-Forward/frozen holdout without tuning on holdout outcomes.
-6. Run real XM Shadow Mode and validate prediction, calibration, grade and drift behavior.
-7. Validate expected versus manually executed XM Demo fills and refine cost assumptions from development/demo evidence only.
-8. Do not enable automatic order execution; the project remains signal-only.
+5. Run Purged CV/CPCV/Walk-Forward model comparison and probability calibration on development data only.
+6. Evaluate the selected production candidate on the frozen holdout once without retuning from its outcome.
+7. Run real XM Shadow Mode and validate prediction, calibration, grade and drift behavior.
+8. Validate expected versus manually executed XM Demo fills and refine cost assumptions from development/demo evidence only.
+9. Do not enable automatic order execution; the project remains signal-only.
 
 ## Local setup (Windows 11)
 
@@ -88,8 +89,6 @@ Each symbol/timeframe produces a manifest containing requested range, first/last
 
 ## Dataset review
 
-Review the complete batch before proposing a holdout:
-
 ```powershell
 matamaple-dataset-review --manifest data/historical/collection_manifest.json
 ```
@@ -97,8 +96,6 @@ matamaple-dataset-review --manifest data/historical/collection_manifest.json
 Exit code `0` requires every listed dataset to be clean and to have a recorded Parquet artifact + SHA-256 plus a valid common history window. This command is read-only.
 
 ## Non-mutating research-holdout proposal
-
-After dataset review succeeds:
 
 ```powershell
 matamaple-holdout-proposal `
@@ -125,5 +122,26 @@ matamaple-freeze-holdout `
 The default registry path is `data/validation/research_holdout.json`. It is hash-protected and cannot be overwritten through the registry API. **Do not run this command on mock/test manifests or simply because collection completed.** Once a real research holdout is frozen, never move or retune its boundary based on outcomes.
 
 The development dataset builder reads the frozen registry, removes all rows at or after `holdout_start` first, and only then runs feature and label generation. Label-horizon rows that would require data beyond the development partition remain unavailable and are dropped rather than reading into the frozen holdout.
+
+## Development-only model research
+
+After a real frozen registry exists, run model research on one clean Parquet dataset:
+
+```powershell
+matamaple-development-experiment `
+  --parquet data/historical/EURUSD/M15.parquet `
+  --holdout-registry data/validation/research_holdout.json `
+  --horizon-bars 4 `
+  --purged-splits 5 `
+  --cpcv-groups 6 `
+  --cpcv-test-groups 2 `
+  --wf-min-train-bars 2000 `
+  --wf-test-bars 250 `
+  --output artifacts/EURUSD_M15_development_experiment.json
+```
+
+The runner verifies that the development cutoff exactly matches frozen `holdout_start` and rejects any dataset row at or beyond that boundary. It compares Logistic Regression first, then XGBoost and LightGBM, using Purged CV OOF predictions, CPCV path accounting, expanding Walk-Forward evaluation and OOF probability calibration. There is no shuffled split option. Model selection is development-only and the CLI summary reports `holdout_evaluated: false`; frozen holdout outcomes are not loaded in this step.
+
+Current v1 experiment calibration is binary-classification only. Multiclass calibration remains a separate hardening task before using `P(BUY)/P(NEUTRAL)/P(SELL)` in production.
 
 For CI or environments without MetaTrader 5/Streamlit, install with `pip install -e ".[dev,ml]"`. Install `.[data]` whenever Parquet historical storage is required.
