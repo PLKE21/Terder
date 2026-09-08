@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_FLOOR
 from enum import StrEnum
-from math import floor
 from typing import Protocol
 
 from matamaple_trader.domain import Signal
@@ -48,15 +48,24 @@ class MT5Preflight(Protocol):
     def order_calc_profit(self, side: Signal, symbol: str, volume: float, open_price: float, close_price: float) -> float | None: ...
 
 
+def _d(value: float) -> Decimal:
+    return Decimal(str(value))
+
+
 def normalize_volume(raw_volume: float, *, volume_min: float, volume_max: float, volume_step: float) -> float:
     if raw_volume <= 0 or volume_min <= 0 or volume_max < volume_min or volume_step <= 0:
         raise ValueError("invalid volume inputs")
-    capped = min(raw_volume, volume_max)
-    steps = floor((capped - volume_min) / volume_step + 1e-12)
-    normalized = volume_min + max(0, steps) * volume_step
     if raw_volume < volume_min:
         return 0.0
-    return round(min(normalized, volume_max), 8)
+
+    raw_d = min(_d(raw_volume), _d(volume_max))
+    min_d = _d(volume_min)
+    max_d = _d(volume_max)
+    step_d = _d(volume_step)
+    steps = ((raw_d - min_d) / step_d).to_integral_value(rounding=ROUND_FLOOR)
+    normalized = min_d + max(Decimal(0), steps) * step_d
+    normalized = min(normalized, max_d)
+    return float(normalized)
 
 
 def size_volume_from_stop(
@@ -70,12 +79,22 @@ def size_volume_from_stop(
     volume_max: float,
     volume_step: float,
 ) -> float:
-    distance = abs(entry_price - stop_loss)
-    if max_risk_amount <= 0 or distance <= 0 or tick_size <= 0 or tick_value <= 0:
+    if max_risk_amount <= 0 or tick_size <= 0 or tick_value <= 0:
         return 0.0
-    loss_per_lot = distance / tick_size * tick_value
-    raw = max_risk_amount / loss_per_lot
-    return normalize_volume(raw, volume_min=volume_min, volume_max=volume_max, volume_step=volume_step)
+
+    distance_d = abs(_d(entry_price) - _d(stop_loss))
+    if distance_d <= 0:
+        return 0.0
+    loss_per_lot = distance_d / _d(tick_size) * _d(tick_value)
+    if loss_per_lot <= 0:
+        return 0.0
+    raw = _d(max_risk_amount) / loss_per_lot
+    return normalize_volume(
+        float(raw),
+        volume_min=volume_min,
+        volume_max=volume_max,
+        volume_step=volume_step,
+    )
 
 
 class FBSOrderAdapter:
