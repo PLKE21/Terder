@@ -9,6 +9,7 @@ from .common import ModelOutput, TrainingGuard
 class LightGBMModel:
     def __init__(self, contract: LabelContract, *, random_state: int = 42, n_estimators: int = 100, max_depth: int = -1, learning_rate: float = 0.05) -> None:
         self.contract = contract
+        self._class_values: np.ndarray | None = None
         common = dict(random_state=random_state, n_estimators=n_estimators, max_depth=max_depth, learning_rate=learning_rate, n_jobs=1, verbosity=-1)
         if contract.target_type == TaskType.REGRESSION:
             self.estimator = LGBMRegressor(**common)
@@ -19,15 +20,28 @@ class LightGBMModel:
 
     def fit(self, X, y, *, guard: TrainingGuard) -> "LightGBMModel":
         guard.assert_allowed()
-        self.estimator.fit(X, y)
+        y_arr=np.asarray(y)
+        if self.contract.target_type == TaskType.MULTICLASS_CLASSIFICATION:
+            classes=np.unique(y_arr)
+            expected=np.asarray([-1,0,1])
+            if not np.array_equal(classes, expected):
+                raise ValueError("multiclass contract requires observed classes exactly [-1, 0, 1]")
+            self._class_values=expected
+            mapping={-1:0,0:1,1:2}
+            encoded=np.asarray([mapping[int(v)] for v in y_arr],dtype=int)
+            self.estimator.fit(X,encoded)
+        else:
+            self.estimator.fit(X,y_arr)
+            if self.contract.target_type == TaskType.BINARY_CLASSIFICATION:
+                self._class_values=np.asarray(self.estimator.classes_)
         return self
 
     def predict_output(self, X) -> ModelOutput:
-        pred = np.asarray(self.estimator.predict(X))
-        if hasattr(self.estimator, "predict_proba"):
-            proba = np.asarray(self.estimator.predict_proba(X))
-            classes = np.asarray(self.estimator.classes_)
-        else:
-            proba = None
-            classes = None
-        return ModelOutput(pred, proba, classes, "lightgbm", self.contract.label_version)
+        if self.contract.target_type == TaskType.REGRESSION:
+            raw=np.asarray(self.estimator.predict(X))
+            return ModelOutput(raw,None,None,"lightgbm",self.contract.label_version)
+
+        raw=np.asarray(self.estimator.predict(X,raw_score=True))
+        proba=np.asarray(self.estimator.predict_proba(X))
+        classes=self._class_values.copy() if self._class_values is not None else np.asarray(self.estimator.classes_)
+        return ModelOutput(raw,proba,classes,"lightgbm",self.contract.label_version)
